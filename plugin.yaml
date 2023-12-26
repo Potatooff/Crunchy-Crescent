@@ -1,0 +1,11 @@
+name: Crunchy Crescent  # Please make sure that the name is unique, it's used to identify the plugin
+author: Potatooff
+version: 0.1.0
+description: A plugin to generate image by ai based of a prompt.  # This is shown as the tooltip
+enabled: true  # Whether to enable the plugin or not
+runtime:
+  main: main.py  # The main file of your plugin
+requirements:
+  # any extra requirements for your plugin, e.g.:
+  - name: requests
+  #   version: 2.25.1  # Optional, if not specified, the latest version will be used
