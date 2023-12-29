@@ -1,6 +1,6 @@
 from base64 import b64decode
 from io import BytesIO
-from os import listdir, path
+from os import path
 from time import sleep
 
 import dearpygui.dearpygui as dpg
@@ -8,9 +8,10 @@ import requests
 import yaml
 from PIL import Image
 
-from src.utils import ImageController as dpg_img
 from src.utils.nodes import NodeParent, theme
-from src.utils.paths import resource
+from src.utils.view import toaster
+
+cookey = True
 
 
 class Inference:  # Crunchy Moon AI Inference
@@ -22,10 +23,14 @@ class Inference:  # Crunchy Moon AI Inference
 
     def decompiller_processor(self, compilled_data: str):
         """Decompile the generated image and change to PIL object"""
-        binary_data: bytes = b64decode(compilled_data)
+        try:
+            binary_data: bytes = b64decode(compilled_data)
+        except Exception as e:
+            toaster.show("Decompiller processor got an error", f"{e}")
         return Image.open(BytesIO(binary_data))
 
     def ImagineA(self, prompt: str, modelID: str, fileID: str, negative: str):
+        global cookey
         p = requests.post(
             "https://swiftysbetatestapi.vercel.app/imagine",
             json={
@@ -35,21 +40,29 @@ class Inference:  # Crunchy Moon AI Inference
                 "negative": negative,
             },
         )
+        cookey = False
         while True:
-            x = requests.post(
-                "https://swiftysbetatestapi.vercel.app/check_status",
-                json={"encrypted_data": p.content.decode("utf-8")},
-            )
-            print(x.content)
-            if x.json()["status"] == "Completed":
-                print("Success! Breaking out of the loop.")
-                image_url = x.json()["image_url"]
-                crescent = image_url.encode("utf-8")
-                refactored = self.refactoring(crescent)
-                del image_url, crescent
-                return self.decompiller_processor(refactored)
+            try:
+                x = requests.post(
+                    "https://swiftysbetatestapi.vercel.app/check_status",
+                    json={"encrypted_data": p.content.decode("utf-8")},
+                )
+                print(x.content)
+                if x.json()["status"] == "Completed":
+                    print("Success! Breaking out of the loop.")
+                    image_url = x.json()["image_url"]
+                    crescent = image_url.encode("utf-8")
+                    refactored = self.refactoring(crescent)
+                    del image_url, crescent
+                    cookey = True
+                    return self.decompiller_processor(refactored)
 
-            sleep(5)
+                sleep(5)
+            except Exception as e:
+                toaster.show(
+                    "Error on API",
+                    f"An error occured while trying to imagine your prompt. {e}",
+                )
 
 
 class Node(NodeParent):
@@ -62,12 +75,8 @@ class Node(NodeParent):
 
         self.name = self.info["name"]
         self.tooltip = self.info["description"]
-        self.viewer = None
-        self.image = ""
-        self.protected = True
-        self.image_path = ""
 
-        # options
+        # PLUGINS VARIABLES
         self.predefined_negative_options = [
             "Lite Humanoid negative",
             "Default humanoid negative",
@@ -77,16 +86,14 @@ class Node(NodeParent):
 
     def new(self, history=True):
         # This is where you create the node using dearpygui
-
         with dpg.node(
             parent="MainNodeEditor",
             tag=self.name + "_" + str(self.counter),
             label=self.name,
             user_data=self,
         ):
-            # I made this node output only
+            dpg.add_node_attribute(attribute_type=dpg.mvNode_Attr_Input)
             with dpg.node_attribute(attribute_type=dpg.mvNode_Attr_Output):
-                # Prompt + tooltips
                 dpg.add_input_text(
                     tag=self.name + "_prompt_" + str(self.counter),
                     label="Prompt",
@@ -96,10 +103,6 @@ class Node(NodeParent):
                     default_value="",
                     callback=self.update_output,
                 )
-                with dpg.tooltip(self.name + "_prompt_" + str(self.counter)):
-                    dpg.add_text(
-                        "Write down a prompt. Ex: A cat in the forest, add details to make it more accurate."
-                    )
 
                 # Model choice
                 dpg.add_combo(
@@ -110,10 +113,6 @@ class Node(NodeParent):
                     width=400,
                     callback=self.update_output,
                 )
-                with dpg.tooltip(self.name + "_model_" + str(self.counter)):
-                    dpg.add_text(
-                        "Choose a model to fit the perfect task for your generation."
-                    )
 
                 # Negative predefined choice
                 dpg.add_combo(
@@ -124,12 +123,6 @@ class Node(NodeParent):
                     width=400,
                     callback=self.update_output,
                 )
-                with dpg.tooltip(
-                    self.name + "_predefined_negative_" + str(self.counter)
-                ):
-                    dpg.add_text(
-                        "These are predefined negative prompts. It will override the negative prompt text box."
-                    )
 
                 # Custom negative prompt
                 dpg.add_input_text(
@@ -140,14 +133,12 @@ class Node(NodeParent):
                     tag=self.name + "_negative_" + str(self.counter),
                     callback=self.update_output,
                 )
-                with dpg.tooltip(self.name + "_negative_" + str(self.counter)):
-                    dpg.add_text(
-                        "Write down what you dont want to be generated. Ex: A dog."
-                    )
 
-                # self.viewer = dpg_img.add_image(self.image)
-
-                # Generate button + Status
+                # Generate button
+                dpg.add_button(
+                    label="Generate",
+                    callback=self.button_gen,
+                )
 
         tag = self.name + "_" + str(self.counter)
 
@@ -156,44 +147,29 @@ class Node(NodeParent):
         # This is where you store the settings; they get automatically updated when the user changes them
         self.settings[tag] = {
             self.name + "_prompt_" + str(self.counter): "",
-            self.name + "_models_" + str(self.counter): "Realist - Humanoid",
-            self.name + "_negative_" + str(self.counter): "",
+            self.name + "_model_" + str(self.counter): "Realist - Humanoid",
             self.name
             + "_predefined_negative_"
             + str(self.counter): "Default humanoid negative",
-            self.name + "_status_" + str(self.counter): "Idle",
+            self.name + "_negative_" + str(self.counter): "",
         }
         # This is a boilerplate function that should be called at the end to make it work with the history
         self.end(tag, history)
+        print(self.settings)
 
-        print(tag)
-        print(self.settings[tag])
-
-    def pick_image(self, path):
-        try:
-            image = path
-        except Exception:
-            print("AN ERROR ON PLUGIN CRUNCHY MOON.")
-            return
-
-        image = image.convert("RGBA")
-        self.image = image.copy()
-        self.image_path = path
-        image.thumbnail((450, 450), Image.LANCZOS)
-        self.viewer.load(image)
-        self.update_output()
-
-    def run(self, tag: str, image: Image = None) -> Image:
-        model_id = 0
-        file_id = 0
-        print(tag)
-        current_prompt = self.settings[tag][self.name + "_prompt_" + tag.split("_")[-1]]
-        current_model = self.settings[tag][self.name + "_models_" + tag.split("_")[-1]]
+    def button_gen(self):
+        tag = self.name + "_" + str(self.counter - 1)
+        current_prompt = self.settings[tag][
+            self.name + "_prompt_" + str(self.counter - 1)
+        ]
+        current_model = self.settings[tag][
+            self.name + "_model_" + str(self.counter - 1)
+        ]
         current_negative = self.settings[tag][
-            self.name + "_negative_" + tag.split("_")[-1]
+            self.name + "_negative_" + str(self.counter - 1)
         ]
         current_predefined_negative = self.settings[tag][
-            self.name + "_predefined_negative_" + tag.split("_")[-1]
+            self.name + "_predefined_negative_" + str(self.counter - 1)
         ]
 
         # Predefined negative handling
@@ -222,7 +198,14 @@ class Node(NodeParent):
             file_id = 662883732315746312
             model_id = 662883732316794887
 
-        processing = self.pick_image(
-            Inference().ImagineA(current_prompt, model_id, file_id, current_negative)
-        )
-        return ""
+        if cookey:
+            answer = Inference().ImagineA(
+                current_prompt, model_id, file_id, current_negative
+            )
+            self.run(answer, tag=tag)
+        else:
+            pass
+
+    def run(self, image: Image, tag: str) -> Image:
+        print(image)
+        return image
